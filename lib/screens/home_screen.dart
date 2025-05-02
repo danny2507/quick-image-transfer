@@ -26,7 +26,7 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _serverAddress;
   bool _isServer = false;
   bool _isLoading = false;
-  String? _selectedImagePath;
+  List<String> _selectedImagePaths = [];
   DeviceInfo? _selectedDevice;
 
   @override
@@ -78,7 +78,7 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (_selectedImagePath != null)
+          if (_selectedImagePaths.isNotEmpty)
             Expanded(
               flex: 3,
               child: Container(
@@ -86,15 +86,30 @@ class _HomeScreenState extends State<HomeScreen> {
                   border: Border.all(color: Colors.grey),
                   borderRadius: BorderRadius.circular(8),
                 ),
-                child: Image.file(
-                  File(_selectedImagePath!),
+                child: _selectedImagePaths.length == 1
+                    ? Image.file(
+                  File(_selectedImagePaths.first),
                   fit: BoxFit.contain,
+                )
+                    : GridView.builder(
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    crossAxisSpacing: 4.0,
+                    mainAxisSpacing: 4.0,
+                  ),
+                  itemCount: _selectedImagePaths.length,
+                  itemBuilder: (context, index) {
+                    return Image.file(
+                      File(_selectedImagePaths[index]),
+                      fit: BoxFit.cover,
+                    );
+                  },
                 ),
               ),
             ),
 
           Expanded(
-            flex: _selectedImagePath != null ? 2 : 1,
+            flex: _selectedImagePaths.isNotEmpty ? 2 : 1,
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
@@ -148,7 +163,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
 
                       // Send button should appear if we have both an image and either a device or server address
-                      if (_selectedImagePath != null && (_selectedDevice != null || _serverAddress != null))
+                      if (_selectedImagePaths.isNotEmpty && (_selectedDevice != null || _serverAddress != null))
                         Padding(
                           padding: const EdgeInsets.only(top: 12.0),
                           child: ElevatedButton.icon(
@@ -204,14 +219,13 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _selectImage() async {
     if (PlatformUtils.isMobile) {
       final ImagePicker picker = ImagePicker();
-      final XFile? image = await picker.pickImage(
-        source: ImageSource.gallery,
-        requestFullMetadata: false, // Optimize for faster loading
+      final List<XFile> images = await picker.pickMultiImage(
+        requestFullMetadata: false,
       );
 
-      if (image != null && mounted) {
+      if (images.isNotEmpty && mounted) {
         setState(() {
-          _selectedImagePath = image.path;
+          _selectedImagePaths = images.map((image) => image.path).toList();
         });
       }
     } else {
@@ -221,13 +235,13 @@ class _HomeScreenState extends State<HomeScreen> {
         extensions: <String>['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp'],
       );
 
-      final XFile? file = await openFile(
+      final List<XFile> files = await openFiles(
         acceptedTypeGroups: <XTypeGroup>[typeGroup],
       );
 
-      if (file != null && mounted) {
+      if (files.isNotEmpty && mounted) {
         setState(() {
-          _selectedImagePath = file.path;
+          _selectedImagePaths = files.map((file) => file.path).toList();
         });
       }
     }
@@ -287,32 +301,43 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _sendImage() async {
-    if (_serverAddress == null || _selectedImagePath == null) {
+    if (_serverAddress == null || _selectedImagePaths.isEmpty) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Server address or image not selected')),
+          const SnackBar(content: Text('Server address or images not selected')),
         );
       }
       return;
     }
 
     setState(() => _isLoading = true);
+
+    int successCount = 0;
+    List<String> failedFiles = [];
     try {
-      final success = await _service.sendImage(
-        _serverAddress!,
-        _selectedImagePath!,
-        _selectedDevice,
-      );
+      for (final imagePath in _selectedImagePaths) {
+        final success = await _service.sendImage(
+          _serverAddress!,
+          imagePath,
+          _selectedDevice,
+        );
+
+        if (success) {
+          successCount++;
+        } else {
+          failedFiles.add(imagePath.split('/').last);
+        }
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(success
-                ? _selectedDevice != null
-                ? 'Image sent successfully to ${_selectedDevice!.name}!'
-                : 'Image sent successfully!'
-                : 'Failed to send image'),
-            backgroundColor: success ? Colors.green : Colors.red,
+            content: Text(
+                successCount == _selectedImagePaths.length
+                    ? 'All ${_selectedImagePaths.length} images sent successfully${_selectedDevice != null ? ' to ${_selectedDevice!.name}' : ''}!'
+                    : 'Sent $successCount/${_selectedImagePaths.length} images. ${failedFiles.isNotEmpty ? 'Failed: ${failedFiles.join(", ")}' : ''}'
+            ),
+            backgroundColor: successCount > 0 ? Colors.green : Colors.red,
           ),
         );
       }
